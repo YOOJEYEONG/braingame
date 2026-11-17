@@ -1,5 +1,7 @@
 # braingame
 
+Live: **https://braingame-nine.vercel.app**
+
 **하루 5분 두뇌 워밍업**: three short brain-warmup games in Korean, built with
 [Expo Exact](https://github.com/expo/exact). Exact is Rust-powered: a Contract compiler, a web
 DOM runtime, and a native Rust runner. Scores stay in this browser's `localStorage`. There is
@@ -30,6 +32,7 @@ brain-warmup/        the Exact app
   app.test.contract  5 seeded gameplay tests
   app.json           manifest (name, lang=ko)
   tools/storage-check.mjs  real-browser check that corrupted localStorage cannot break the app
+  tools/live-e2e.mjs       real-time play of all three games against a built or deployed site
 exact/               Expo Exact checkout (git-ignored; build.sh clones it at the pinned commit)
 ```
 
@@ -55,7 +58,12 @@ bun exact.mjs contract build app.contract --json   # [] = no errors or warnings
 bun exact.mjs test web                             # the 5 gameplay tests in Chrome
 bun exact.mjs verify                               # tests, then light/dark at 390 and 1280 px, accessibility tree, largest text size, relaunch
 bun tools/storage-check.mjs http://127.0.0.1:8765/ # with `serve dist` running
+bun tools/live-e2e.mjs https://braingame-nine.vercel.app   # about 2 minutes of real-time play
 ```
+
+`test` and `verify` drive a development build with Exact's agent, which controls the clock. A
+production page has no agent adapter, so `live-e2e.mjs` plays the deployed site in real time
+instead.
 
 ## How it works
 
@@ -81,6 +89,10 @@ three game routes to Exact's `shell.html`, so deep links return 200 while real f
 served first. Unknown paths get `404.html`, a copy of the shell. Hashed `.js` and `.css` files
 are cached as immutable.
 
+The Vercel project `braingame` (team `yoojeyeongs-projects`) is connected to
+`github.com/YOOJEYEONG/braingame`. Each push to `main` builds on Vercel and goes to
+production; the first, cold build takes about 11 minutes, mostly compiling Exact's Rust tools.
+
 ## Validation (2026-11-17)
 
 - `contract build --json` returns `[]`.
@@ -99,12 +111,27 @@ are cached as immutable.
   - Stroop scored 6/6 with keys 1–4 matched to the ink;
   - the focus ring is a solid 2px green line.
 
+- On the live site, `bun tools/live-e2e.mjs`: 24/24 checks passed, desktop 1280×900 and mobile
+  390×844 (touch), no page errors:
+  - math scored 10 right and 2 deliberately wrong, ended at 60 s, and Retry restarted a fresh
+    run;
+  - leaving mid-run through the bar Back recorded nothing;
+  - Stroop hard: score = correct − wrong;
+  - sequence easy: watched and repeated 3, then 4 flashes; two misses ended it at 4;
+  - after reload: three records newest first, "오늘 3판", best per level;
+  - keyboard: the first Tab reaches the bar Back (2px green ring), and Enter returns home;
+  - HTTP: `/`, `/g/math`, `/g/seq/play` and `/g/stroop/result` return 200, an unknown path
+    returns 404.
+
 ## Limits
 
 - Results live only in one browser, with no sync or export. History keeps the last 30 games.
 - Reloading a result page shows "보여 줄 결과가 없어요" because a finished session is not
   persisted, only its record.
 - Exact is pre-1.0 and changes daily. The build pins one commit on purpose.
+- On the web, Exact turns each header's `id="back"` button (목록, 그만하기, 난이도) into the bar's
+  own Back. It is drawn on the focusable `<header>`: keyboard and screen-reader users reach it
+  there, not as a separate button.
 - Only the web target was built and checked. macOS, iOS and Linux are untested here.
 
 ## Skills used
