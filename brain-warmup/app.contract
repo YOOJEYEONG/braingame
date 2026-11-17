@@ -1,0 +1,417 @@
+// 하루 5분 두뇌 워밍업: three short games, scored on this device only.
+// Everything is Contract: rounds come from a seeded roll (Contract has no random()),
+// the record is two `persist` states read back defensively.
+
+shape Time
+  epochAtZero: number
+  utcOffset: number
+  seed: number
+
+routes nav
+  home "/"
+    game "/g/:game"
+      play "/g/:game/play"
+      result "/g/:game/result"
+
+// docs/recipes/random-rolls.md: integer-only so every host rolls the same.
+fn turn(x: number): number = (x % 65536) * 32768 + floor(x / 65536)
+fn stir(x: number): number = turn((x * (16807 + floor(x / 65536))) % 2147483647)
+fn roll(seed: number, k: number, n: number): number = floor(stir(stir(stir(1 + (stir(stir(1 + seed % 2147483646)) + k) % 2147483646))) * n / 2147483647)
+
+fn isGame(g: string): bool = g == "seq" or g == "stroop" or g == "math"
+fn isLevel(l: string): bool = l == "easy" or l == "normal" or l == "hard"
+fn gameName(g: string): string = g == "seq" ? "순서 기억" : g == "stroop" ? "색 집중" : "빠른 셈"
+fn levelName(l: string): string = l == "easy" ? "쉬움" : l == "hard" ? "어려움" : "보통"
+fn gameIndex(g: string): number = g == "seq" ? 0 : g == "stroop" ? 1 : 2
+fn levelIndex(l: string): number = l == "easy" ? 0 : l == "hard" ? 2 : 1
+fn durationMs(g: string, l: string): number = g == "stroop" ? (l == "easy" ? 45000 : l == "hard" ? 30000 : 40000) : 60000
+fn unit(g: string): string = g == "seq" ? "개" : "점"
+
+// Sequence memory: a 3×3 board flashes a path; each round adds one tile.
+fn seqStart(l: string): number = l == "easy" ? 3 : l == "hard" ? 5 : 4
+fn seqHalfMs(l: string): number = l == "easy" ? 450 : l == "hard" ? 280 : 360
+fn seqTile(s: number, i: number): number = roll(s, i, 9)
+
+// Colour attention: name the ink, not the word.
+fn stroopWord(s: number, k: number): number = roll(s, k, 4)
+fn stroopSame(l: string): number = l == "easy" ? 60 : l == "hard" ? 15 : 35
+fn stroopInk(s: number, k: number, l: string): number = roll(s + 101, k, 100) < stroopSame(l) ? stroopWord(s, k) : (stroopWord(s, k) + 1 + roll(s + 202, k, 3)) % 4
+fn colorName(i: number): string = i == 0 ? "빨강" : i == 1 ? "파랑" : i == 2 ? "초록" : "보라"
+fn colorToken(i: number): string = i == 0 ? "stroop.red" : i == 1 ? "stroop.blue" : i == 2 ? "stroop.green" : "stroop.purple"
+
+// Quick arithmetic: op 0 +, 1 −, 2 ×, 3 ÷ (always exact).
+fn mathOp(s: number, k: number, l: string): number = roll(s, 3 * k, l == "easy" ? 2 : l == "hard" ? 4 : 3)
+fn lo(l: string): number = l == "easy" ? 1 : l == "hard" ? 20 : 10
+fn span(l: string): number = l == "easy" ? 19 : l == "hard" ? 80 : 50
+fn mulMax(l: string): number = l == "hard" ? 15 : 9
+fn mathX(s: number, k: number, l: string): number = lo(l) + roll(s, 3 * k + 1, span(l))
+fn mathY(s: number, k: number, l: string): number = lo(l) + roll(s, 3 * k + 2, span(l))
+fn mathSmall(s: number, k: number): number = 2 + roll(s, 3 * k + 2, 8)
+fn mathBig(s: number, k: number, l: string): number = 2 + roll(s, 3 * k + 1, mulMax(l) - 1)
+fn mathA(s: number, k: number, l: string): number = mathOp(s, k, l) == 0 ? mathX(s, k, l) : mathOp(s, k, l) == 1 ? max(mathX(s, k, l), mathY(s, k, l)) : mathOp(s, k, l) == 2 ? mathBig(s, k, l) : mathBig(s, k, l) * mathSmall(s, k)
+fn mathB(s: number, k: number, l: string): number = mathOp(s, k, l) == 0 ? mathY(s, k, l) : mathOp(s, k, l) == 1 ? min(mathX(s, k, l), mathY(s, k, l)) : mathSmall(s, k)
+fn mathAns(s: number, k: number, l: string): number = mathOp(s, k, l) == 0 ? mathA(s, k, l) + mathB(s, k, l) : mathOp(s, k, l) == 1 ? mathA(s, k, l) - mathB(s, k, l) : mathOp(s, k, l) == 2 ? mathA(s, k, l) * mathB(s, k, l) : mathA(s, k, l) / mathB(s, k, l)
+fn opSign(op: number): string = op == 0 ? "+" : op == 1 ? "−" : op == 2 ? "×" : "÷"
+fn mathText(s: number, k: number, l: string): string = `${mathA(s, k, l)} ${opSign(mathOp(s, k, l))} ${mathB(s, k, l)}`
+
+// A history entry is "game|level|score|epochMs"; anything else in storage is skipped.
+fn field(h: string, i: number): string = match h.split("|").at(i) { case some(v) => v, case none => "" }
+fn num(h: string, i: number): number = match parseNumber(field(h, i)) { case some(n) => n, case none => -1 }
+fn validRec(h: string): bool = h.split("|").length == 4 and isGame(field(h, 0)) and isLevel(field(h, 1)) and num(h, 2) >= 0 and num(h, 2) <= 1000 and num(h, 3) > 0
+fn bestAt(bests: number[], i: number): number = match bests.at(i) { case some(n) => (n >= 0 and n <= 1000 ? round(n) : 0), case none => 0 }
+fn isoPart(iso: string, i: number): number = match parseNumber(match iso.split("-").at(i) { case some(v) => v, case none => "" }) { case some(n) => n, case none => 0 }
+fn dayLabel(ms: number, offset: number): string = `${isoPart(formatDate(ms, offset, "iso"), 1)}월 ${isoPart(formatDate(ms, offset, "iso"), 2)}일`
+fn bestText(n: number, g: string): string = n > 0 ? `${n}${unit(g)}` : "–"
+
+component BrainWarmup
+  resource time = exactTime() as shape Time
+  state level = "normal" persist
+  state history = [] persist
+  state bests = [0, 0, 0, 0, 0, 0, 0, 0, 0] persist
+  state runs = 0
+  state game = "seq"
+  state playLevel = "normal"
+  state phase = "idle"
+  state entry = -1
+  state endsAt = 0
+  state now = 0
+  state k = 0
+  state correct = 0
+  state wrong = 0
+  state feedback = ""
+  state draft = ""
+  state seqLen = 3
+  state seqPos = 0
+  state seqScore = 0
+  state showTick = 0
+  state showing = false
+  state lives = 2
+  state lastTile = -1
+  state tileOk = true
+  state lastScore = 0
+  state lastBest = 0
+
+  derive lvl = isLevel(level) ? level : "normal"
+  derive seedv = time.seed % 1000000 + runs * 7919
+  derive live = phase == "play" and top(nav).id == entry and top(nav).name == "play"
+  derive valid = history.filter(h => validRec(h))
+  derive left = max(0, endsAt - now)
+  derive lit = live and showing and showTick % 2 == 1 ? seqTile(seedv, floor(showTick / 2)) : -1
+  derive ink = stroopInk(seedv, k, playLevel)
+  derive today = formatDate(time.epochAtZero + now, time.utcOffset, "iso")
+  derive todayCount = valid.filter(h => formatDate(num(h, 3), time.utcOffset, "iso") == today).length
+  derive accuracy = correct + wrong > 0 ? round(correct * 100 / (correct + wrong)) : 0
+
+  task clock when live and game != "seq"
+    every(200, tick)
+  task flashEasy when live and game == "seq" and showing and playLevel == "easy"
+    every(450, flashStep)
+  task flashNormal when live and game == "seq" and showing and playLevel == "normal"
+    every(360, flashStep)
+  task flashHard when live and game == "seq" and showing and playLevel == "hard"
+    every(280, flashStep)
+
+  action back
+    nav = back(nav)
+  action home
+    phase = "idle"
+    nav = go(nav, "/")
+  action choose(l: string)
+    level = l
+  action start(g: string)
+    let n = top(nav).name == "game" ? push(nav, path("play", g)) : replace(nav, path("play", g))
+    nav = n
+    entry = top(n).id
+    game = g
+    playLevel = lvl
+    phase = "play"
+    runs = runs + 1
+    k = 0
+    correct = 0
+    wrong = 0
+    feedback = ""
+    draft = ""
+    seqLen = seqStart(lvl)
+    seqPos = 0
+    seqScore = 0
+    showTick = 0
+    showing = true
+    lives = 2
+    lastTile = -1
+    now = performanceNow()
+    endsAt = performanceNow() + durationMs(g, lvl)
+  action quit
+    phase = "idle"
+    nav = back(nav)
+  action finish(score: number)
+    let at = time.epochAtZero + performanceNow()
+    let idx = gameIndex(game) * 3 + levelIndex(playLevel)
+    phase = "done"
+    lastScore = score
+    lastBest = bestAt(bests, idx)
+    bests = range(9).map(i => i == idx ? max(bestAt(bests, i), score) : bestAt(bests, i))
+    history = [`${game}|${playLevel}|${score}|${round(at)}`].concat(valid).slice(0, 30)
+    nav = replace(nav, path("result", game))
+  action tick
+    now = performanceNow()
+    if performanceNow() >= endsAt
+      finish(game == "stroop" ? max(0, correct - wrong) : correct)
+  action flashStep
+    let t = showTick + 1
+    showTick = t
+    if t >= 2 * seqLen
+      showing = false
+      feedback = `이제 같은 순서로 누르세요. 0 / ${seqLen}`
+  action pressTile(n: number)
+    if live and not showing
+      lastTile = n
+      if n == seqTile(seedv, seqPos)
+        tileOk = true
+        let pressed = seqPos + 1
+        let done = seqLen
+        if pressed == done
+          seqScore = done
+          if seqLen >= 16
+            finish(seqLen)
+          else
+            seqLen = seqLen + 1
+            seqPos = 0
+            showTick = 0
+            showing = true
+            lastTile = -1
+            feedback = `${done}개 성공. 다음은 ${done + 1}개예요.`
+        else
+          seqPos = pressed
+          feedback = `이제 같은 순서로 누르세요. ${pressed} / ${done}`
+      else
+        tileOk = false
+        if lives <= 1
+          finish(seqScore)
+        else
+          lives = lives - 1
+          seqPos = 0
+          showTick = 0
+          showing = true
+          feedback = "틀렸어요. 같은 순서를 한 번 더 보여 드릴게요."
+  action pickInk(c: number)
+    if live
+      if c == ink
+        correct = correct + 1
+        feedback = "맞아요."
+      else
+        wrong = wrong + 1
+        feedback = `방금 글자색은 ${colorName(ink)}이었어요.`
+      k = k + 1
+  action editDraft(v: string)
+    draft = v
+  action submitMath
+    if live
+      match parseNumber(draft.trim())
+        case some(n)
+          if n == mathAns(seedv, k, playLevel)
+            correct = correct + 1
+            feedback = "정답이에요."
+          else
+            wrong = wrong + 1
+            feedback = `${mathText(seedv, k, playLevel)} = ${mathAns(seedv, k, playLevel)}`
+          k = k + 1
+          draft = ""
+        case none
+          feedback = "숫자로 답을 적어 주세요."
+  action onKey(key: string)
+    match parseNumber(key)
+      case some(n)
+        if (game == "stroop") and (n >= 1) and (n <= 4)
+          pickInk(n - 1)
+        if (game == "seq") and (n >= 1) and (n <= 9)
+          pressTile(n - 1)
+      case none
+        feedback = feedback
+  action clearAll
+    history = []
+    bests = [0, 0, 0, 0, 0, 0, 0, 0, 0]
+
+  view
+    main testId="root" navigationKey=`${top(nav).id}` navigationBack="back" width="100%" height="100%"
+      background-color="surface.page" color="text.ink" accent-color="accent.leaf"
+      for e in stack(nav) key=e.id
+        if e.name == "home"
+          column navigationKey=`${e.id}` navigationScroll="home-scroll" position="absolute" inset=0 display="flex" flex-direction="column" background-color="surface.page"
+            header display="flex" align-items="center" padding="10px 20px"
+              text "두뇌 워밍업" role="heading" aria-level=2 font-weight=700
+            scroll id="home-scroll" flex=1 min-height=0
+              column max-width="60rem" margin="0 auto" padding="12px 20px 56px" gap=40
+                row flex-wrap="wrap" gap=28 align-items="center" padding="20px 0 0"
+                  column flex="1 1 320px" gap=16
+                    text "하루 5분, 머리를 가볍게 깨우는 세 가지 게임" role="heading" aria-level=1 font-size="2.6rem" font-weight=800 line-height=1.22 letter-spacing="-0.03em" max-width="15em" testId="hero-title"
+                    text "순서를 기억하고, 글자보다 색을 먼저 보고, 암산을 빠르게. 한 판은 1분 남짓이고 기록은 이 브라우저에만 남아요." color="text.soft" font-size="1.06rem" line-height=1.65 max-width="34em"
+                    text (todayCount == 0 ? "오늘은 아직 한 판도 하지 않았어요." : `오늘 ${todayCount}판을 했어요.`) font-weight=600 color="accent.leaf" testId="today"
+                  svg width="min(100%, 13.75rem)" aspect-ratio="1" viewBox="0 0 220 220" flex="0 1 13.75rem" aria-hidden="true"
+                    rect x=4 y=4 width=212 height=212 rx=36 fill="surface.sunk"
+                    for i in range(9) key=i
+                      rect x=(22 + (i % 3) * 62) y=(22 + floor(i / 3) * 62) width=52 height=52 rx=14 fill=(i == 0 or i == 4 or i == 5 ? "accent.lime" : "surface.card") stroke="line.soft" stroke-width=1.5
+                    polyline points="48,48 110,110 172,110" fill="none" stroke="text.ink" stroke-width=3 stroke-linecap="round" stroke-linejoin="round"
+                    circle cx=48 cy=48 r=7 fill="text.ink"
+                    circle cx=172 cy=110 r=7 fill="text.ink"
+                column gap=14
+                  text "게임 고르기" role="heading" aria-level=2 font-size="1.3rem" font-weight=700
+                  column display="grid" grid-template-columns="repeat(auto-fill, minmax(min(100%, 16.5rem), 1fr))" gap=16
+                    for g in ["seq", "stroop", "math"] key=g
+                      link href=path("game", g) testId=`open-${g}` display="flex" flex-direction="column" gap=12 padding=20 border-radius=22 background-color="surface.card" border="1px solid var(--line.soft)" color="text.ink" text-decoration="none"
+                        svg width=64 height=64 viewBox="0 0 64 64" aria-hidden="true"
+                          rect x=0 y=0 width=64 height=64 rx=16 fill="accent.wash"
+                          if g == "seq"
+                            for i in range(9) key=i
+                              rect x=(12 + (i % 3) * 14) y=(12 + floor(i / 3) * 14) width=11 height=11 rx=3 fill=(i == 2 or i == 4 ? "accent.leaf" : "line.soft")
+                          if g == "stroop"
+                            circle cx=25 cy=26 r=10 fill="stroop.red"
+                            circle cx=39 cy=26 r=10 fill="stroop.blue"
+                            circle cx=25 cy=40 r=10 fill="stroop.green"
+                            circle cx=39 cy=40 r=10 fill="stroop.purple"
+                          if g == "math"
+                            rect x=14 y=29 width=16 height=5 rx=2 fill="accent.leaf"
+                            rect x=19.5 y=23.5 width=5 height=16 rx=2 fill="accent.leaf"
+                            rect x=34 y=24 width=16 height=5 rx=2 fill="text.ink"
+                            rect x=34 y=35 width=16 height=5 rx=2 fill="text.ink"
+                        text gameName(g) role="heading" aria-level=3 font-size="1.25rem" font-weight=700
+                        text (g == "seq" ? "깜빡이는 칸의 순서를 기억해 그대로 눌러요." : g == "stroop" ? "글자의 뜻이 아니라 글자색을 골라요." : "60초 동안 맞힐 수 있는 만큼 계산해요.") color="text.soft" line-height=1.55
+                        text `최고 기록  쉬움 ${bestText(bestAt(bests, gameIndex(g) * 3), g)} / 보통 ${bestText(bestAt(bests, gameIndex(g) * 3 + 1), g)} / 어려움 ${bestText(bestAt(bests, gameIndex(g) * 3 + 2), g)}` font-size="0.9rem" font-variant-numeric="tabular-nums" color="text.soft" testId=`best-${g}`
+                column gap=12
+                  text "최근 기록" role="heading" aria-level=2 font-size="1.3rem" font-weight=700
+                  if valid.length == 0
+                    column padding=20 border-radius=18 background-color="surface.sunk" gap=6 testId="empty-history"
+                      text "아직 기록이 없어요." font-weight=600
+                      text "위에서 게임 하나를 골라 첫 판을 시작해 보세요." color="text.soft"
+                  else
+                    column border-radius=18 background-color="surface.card" border="1px solid var(--line.soft)" testId="history"
+                      for h, i in valid.slice(0, 8) key=`${i}-${h}`
+                        row padding="12px 18px" gap="4px 12px" flex-wrap="wrap" align-items="center" border-top=(i == 0 ? "none" : "1px solid var(--line.soft)")
+                          text gameName(field(h, 0)) font-weight=600 flex="1 1 8rem" min-width=0
+                          text levelName(field(h, 1)) color="text.soft"
+                          text `${num(h, 2)}${unit(field(h, 0))}` font-variant-numeric="tabular-nums" font-weight=700 min-width="3.5em" text-align="right" testId=`history-${i}`
+                          text dayLabel(num(h, 3), time.utcOffset) color="text.soft" font-variant-numeric="tabular-nums" min-width="4.5em" text-align="right"
+                    button commandfor="clear" command="show-modal" testId="clear-open" align-self="flex-start"
+                      text "기록 지우기"
+                    dialog id="clear" role="alertdialog" aria-label="모든 기록과 최고 기록을 지울까요?"
+                      button press=clearAll destructive=true commandfor="clear" command="close" testId="clear-confirm"
+                        text "지우기"
+                      button commandfor="clear" command="close"
+                        text "취소"
+                text "재미로 하는 가벼운 두뇌 놀이예요. 의학적·인지적 효과를 약속하지 않으며, 점수는 그날의 컨디션에 따라 달라질 수 있어요." font-size="0.88rem" color="text.soft" line-height=1.6 max-width="40em"
+
+        if e.name == "game"
+          column navigationKey=`${e.id}` navigationScroll=`intro-${e.id}` position="absolute" inset=0 display="flex" flex-direction="column" background-color="surface.page"
+            header display="flex" align-items="center" gap=8 padding="10px 20px"
+              button id="back" press=back testId="intro-back"
+                text "목록"
+              text (isGame(e.params.game) ? gameName(e.params.game) : "없는 게임") role="heading" aria-level=2 font-weight=700
+            scroll id=`intro-${e.id}` flex=1 min-height=0
+              if not isGame(e.params.game)
+                column max-width="40rem" margin="0 auto" padding=24 gap=12
+                  text "이 주소에는 게임이 없어요." font-weight=600 testId="no-game"
+                  link href="/"
+                    text "게임 목록으로 가기"
+              else
+                column max-width="40rem" margin="0 auto" padding="16px 20px 48px" gap=24
+                  text gameName(e.params.game) role="heading" aria-level=1 font-size="2.2rem" font-weight=800 letter-spacing="-0.02em"
+                  column gap=10 padding=20 border-radius=20 background-color="surface.card" border="1px solid var(--line.soft)"
+                    text "하는 법" role="heading" aria-level=2 font-weight=700
+                    if e.params.game == "seq"
+                      text "1. 9칸 판에서 칸이 하나씩 초록으로 깜빡여요." line-height=1.6
+                      text "2. 깜빡임이 끝나면 같은 순서로 칸을 눌러요. 키보드는 1~9 (왼쪽 위부터)." line-height=1.6
+                      text "3. 맞히면 한 칸이 늘어요. 틀릴 기회는 두 번이고, 점수는 끝까지 맞힌 가장 긴 순서예요." line-height=1.6
+                    if e.params.game == "stroop"
+                      text "1. 색 이름이 다른 색 글자로 나와요. 예: 보라색으로 쓴 '빨강'." line-height=1.6
+                      text "2. 글자의 뜻이 아니라 글자색을 골라요. 키보드는 1 빨강, 2 파랑, 3 초록, 4 보라." line-height=1.6
+                      text "3. 점수는 맞힌 수에서 틀린 수를 뺀 값이에요. 마구 누르면 점수가 오르지 않아요." line-height=1.6
+                    if e.params.game == "math"
+                      text "1. 60초 동안 문제가 하나씩 나와요." line-height=1.6
+                      text "2. 답을 적고 Enter나 확인을 눌러요. 틀려도 다음 문제로 넘어가요." line-height=1.6
+                      text "3. 점수는 맞힌 문제 수예요." line-height=1.6
+                  column gap=10
+                    text "난이도" role="heading" aria-level=2 font-weight=700 id="level-label"
+                    row role="radiogroup" aria-labelledby="level-label" gap=8 flex-wrap="wrap"
+                      for l in ["easy", "normal", "hard"] key=l
+                        button role="radio" aria-checked=(lvl == l) press=choose(l) buttonStyle=(lvl == l ? "filled" : "bordered") testId=`level-${l}`
+                          text levelName(l)
+                    text (e.params.game == "seq" ? `${seqStart(lvl)}칸부터 시작, 한 칸이 ${seqHalfMs(lvl) * 2 / 1000}초마다 바뀌어요.` : e.params.game == "stroop" ? `${durationMs("stroop", lvl) / 1000}초, 뜻과 색이 같은 글자 약 ${stroopSame(lvl)}%.` : lvl == "easy" ? "60초, 20 이하의 덧셈·뺄셈." : lvl == "hard" ? "60초, 두 자리 덧셈·뺄셈과 곱셈·나눗셈." : "60초, 두 자리 덧셈·뺄셈과 구구단 곱셈.") color="text.soft" testId="level-detail"
+                    text `이 난이도 최고 기록: ${bestText(bestAt(bests, gameIndex(e.params.game) * 3 + levelIndex(lvl)), e.params.game)}` color="text.soft" font-variant-numeric="tabular-nums" testId="level-best"
+                  button press=start(e.params.game) buttonStyle="filled" testId="start" align-self="flex-start"
+                    text "시작하기"
+
+        if e.name == "play"
+          column navigationKey=`${e.id}` position="absolute" inset=0 display="flex" flex-direction="column" background-color="surface.page" key=onKey
+            header display="flex" align-items="center" gap=8 padding="10px 20px"
+              button id="back" press=quit testId="quit"
+                text "그만하기"
+              text `${gameName(game)} · ${levelName(playLevel)}` role="heading" aria-level=2 font-weight=700
+            if not live or game != e.params.game
+              column max-width="32rem" margin="0 auto" padding=24 gap=14 align-items="flex-start" testId="stale"
+                text "진행 중인 게임이 없어요." font-weight=600
+                text "다른 화면으로 나가면 그 판은 기록하지 않고 멈춰요." color="text.soft"
+                button press=start(e.params.game) buttonStyle="filled" testId="restart"
+                  text "새로 시작하기"
+            else
+              column flex=1 min-height=0 align-items="center" padding="12px 20px 32px" gap=20
+                row gap=24 justify-content="center" font-variant-numeric="tabular-nums" color="text.soft"
+                  if game == "seq"
+                    text `길이 ${seqLen}` testId="seq-len"
+                    text `남은 기회 ${lives}` testId="lives"
+                    text `기록 ${seqScore}` testId="score"
+                  else
+                    text `${ceil(left / 1000)}초` font-weight=700 color="text.ink" testId="time-left" aria-label=`남은 시간 ${ceil(left / 1000)}초`
+                    text `맞음 ${correct}` testId="correct"
+                    text `틀림 ${wrong}` testId="wrong"
+                if game == "seq"
+                  column display="grid" grid-template-columns="repeat(3, 1fr)" gap=10 width="min(100%, 21rem)" testId="board"
+                    for i in range(9) key=i
+                      button press=pressTile(i) aria-label=`${i + 1}번 칸` testId=`tile-${i}` aspect-ratio="1" border-radius=18 border=(lit == i ? "3px solid var(--text.ink)" : "1px solid var(--line.soft)") background-color=(lit == i ? "accent.lime" : not showing and lastTile == i ? (tileOk ? "accent.wash" : "surface.sunk") : "surface.card") color="text.soft"
+                        text `${i + 1}` font-size="0.85rem"
+                  text (showing ? "순서를 잘 보세요." : feedback) aria-live="polite" color="text.soft" text-align="center" testId="feedback"
+                if game == "stroop"
+                  column align-items="center" justify-content="center" padding="28px 12px" width="min(100%, 28rem)" box-sizing="border-box" border-radius=24 background-color="surface.card" border="1px solid var(--line.soft)"
+                    text colorName(stroopWord(seedv, k)) color=colorToken(ink) font-size="4.2rem" font-weight=800 letter-spacing="-0.02em" testId="word" aria-label=`단어 ${colorName(stroopWord(seedv, k))}`
+                  text "글자색은?" font-weight=600
+                  column display="grid" grid-template-columns="repeat(2, 1fr)" gap=10 width="min(100%, 28rem)"
+                    for c in range(4) key=c
+                      button press=pickInk(c) testId=`ink-${c}` aria-label=`${c + 1} ${colorName(c)}` padding="14px 12px" border-radius=16 background-color="surface.card" border="1px solid var(--line.soft)" color="text.ink" font-size="1.05rem" font-weight=600
+                        row gap=10 align-items="center" justify-content="center"
+                          svg width=18 height=18 viewBox="0 0 18 18" aria-hidden="true"
+                            circle cx=9 cy=9 r=8 fill=colorToken(c)
+                          text `${c + 1}  ${colorName(c)}`
+                  text feedback aria-live="polite" color="text.soft" testId="feedback"
+                if game == "math"
+                  text `${mathText(seedv, k, playLevel)} = ?` font-size="3.4rem" font-weight=800 font-variant-numeric="tabular-nums" letter-spacing="-0.02em" testId="problem"
+                  row gap=10 width="min(100%, 22rem)"
+                    input value=draft input=editDraft submit=submitMath inputmode="numeric" enterkeyhint="done" autofocus=true aria-label="답" placeholder="답" flex=1 min-width=0 font-size="1.4rem" testId="answer"
+                    button press=submitMath buttonStyle="filled" testId="submit"
+                      text "확인"
+                  text feedback aria-live="polite" color="text.soft" font-variant-numeric="tabular-nums" testId="feedback"
+
+        if e.name == "result"
+          column navigationKey=`${e.id}` position="absolute" inset=0 display="flex" flex-direction="column" background-color="surface.page"
+            header display="flex" align-items="center" gap=8 padding="10px 20px"
+              button id="back" press=back testId="result-back"
+                text "난이도"
+              text "결과" role="heading" aria-level=2 font-weight=700
+            if phase != "done"
+              column max-width="32rem" margin="0 auto" padding=24 gap=14 align-items="flex-start"
+                text "보여 줄 결과가 없어요." font-weight=600 testId="no-result"
+                link href="/"
+                  text "게임 목록으로 가기"
+            else
+              column max-width="32rem" width="100%" box-sizing="border-box" margin="0 auto" padding="24px 20px 48px" gap=22 align-items="center"
+                text `${gameName(game)} · ${levelName(playLevel)}` color="text.soft"
+                column align-items="center" justify-content="center" width="min(12.5rem, 100%)" aspect-ratio="1" border-radius="50%" background-color="accent.lime" color="ink.on-lime"
+                  text `${lastScore}` role="heading" aria-level=1 font-size="4.6rem" font-weight=800 font-variant-numeric="tabular-nums" testId="final-score" aria-label=`점수 ${lastScore}${unit(game)}`
+                  text (game == "seq" ? "개 순서" : "점") font-weight=600
+                text (lastScore > lastBest ? (lastBest == 0 ? "이 난이도의 첫 기록이에요." : `최고 기록을 ${lastScore - lastBest}${unit(game)} 넘었어요.`) : lastScore == lastBest ? "최고 기록과 같아요." : `최고 기록은 ${lastBest}${unit(game)}이에요.`) font-weight=600 text-align="center" testId="best-note"
+                if game != "seq"
+                  text `맞음 ${correct} · 틀림 ${wrong} · 정확도 ${accuracy}%` color="text.soft" font-variant-numeric="tabular-nums" testId="detail"
+                row gap=10 flex-wrap="wrap" justify-content="center"
+                  button press=start(game) buttonStyle="filled" testId="retry"
+                    text "다시 하기"
+                  button press=back buttonStyle="bordered" testId="change-level"
+                    text "난이도 바꾸기"
+                  button press=home buttonStyle="bordered" testId="go-home"
+                    text "처음으로"

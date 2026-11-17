@@ -1,0 +1,24 @@
+{
+  "$schema": "../exact/scripts/app.schema.json",
+  "name": "하루 5분 두뇌 워밍업",
+  "short_name": "두뇌 워밍업",
+  "description": "순서 기억, 색 집중, 빠른 셈. 하루 5분 가볍게 머리를 깨우는 세 가지 게임. 기록은 이 브라우저에만 저장됩니다.",
+  "lang": "ko",
+  "theme_color": "#f4f3ee",
+  "background_color": "#f4f3ee",
+  "id": "com.example.brain-warmup-652150",
+  "start_url": "/",
+  "display": "standalone",
+  "app": {
+    "id": "com.example.brain-warmup-652150",
+    "name": "두뇌 워밍업"
+  },
+  "host": {
+    "web": {}
+  },
+  "deploy": {
+    "store": {
+      "web": "0"
+    }
+  }
+}

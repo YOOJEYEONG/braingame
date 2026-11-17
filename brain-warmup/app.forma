@@ -1,0 +1,18 @@
+forma brain
+
+theme
+  AccentColor = light-dark(#2f6b1f, #a6d86a)
+  surface.page = light-dark(#f4f3ee, #14181d)
+  surface.card = light-dark(#ffffff, #1d2229)
+  surface.sunk = light-dark(#e9e8e1, #252b33)
+  line.soft = light-dark(#dcdad1, #323943)
+  text.ink = light-dark(#17202b, #eceee8)
+  text.soft = light-dark(#555d69, #a7adb6)
+  accent.leaf = light-dark(#2f6b1f, #a6d86a)
+  accent.lime = light-dark(#c4ea4c, #b5dc3c)
+  accent.wash = light-dark(#eef7cf, #2a3519)
+  ink.on-lime = #17202b  scheme=fixed
+  stroop.red = light-dark(#c62828, #ff7070)
+  stroop.blue = light-dark(#1d58c4, #7fa9ff)
+  stroop.green = light-dark(#1d7a39, #5fd48b)
+  stroop.purple = light-dark(#7a3db8, #c79dff)

@@ -1,0 +1,6 @@
+/exact/
+/brain-warmup/target/
+/brain-warmup/dist/
+/brain-warmup/.exact/
+/brain-warmup/node_modules/
+.DS_Store

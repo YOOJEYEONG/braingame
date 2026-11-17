@@ -1,0 +1,94 @@
+seed 1
+
+test "home starts empty with no invented stats"
+  expect tree has "root"
+  expect tree has "empty-history"
+  expect text "today" == "오늘은 아직 한 판도 하지 않았어요."
+  expect text "best-math" == "최고 기록  쉬움 – / 보통 – / 어려움 –"
+
+test "quick math scores right answers, ends at 60 seconds and keeps the record"
+  tap "open-math"
+  clock settle
+  tap "start"
+  clock settle
+  expect text "problem" == "36 − 27 = ?"
+  type "answer" "9"
+  tap "submit"
+  expect text "correct" == "맞음 1"
+  expect text "problem" == "5 × 8 = ?"
+  type "answer" "41"
+  tap "submit"
+  expect text "wrong" == "틀림 1"
+  expect text "feedback" == "5 × 8 = 40"
+  type "answer" "abc"
+  tap "submit"
+  expect text "feedback" == "숫자로 답을 적어 주세요."
+  expect text "wrong" == "틀림 1"
+  clock +59000
+  expect text "time-left" == "1초"
+  clock +1200
+  clock settle
+  expect text "final-score" == "1"
+  expect text "detail" == "맞음 1 · 틀림 1 · 정확도 50%"
+  expect text "best-note" == "이 난이도의 첫 기록이에요."
+  tap "go-home"
+  clock settle
+  expect text "history-0" == "1점"
+  expect text "best-math" == "최고 기록  쉬움 – / 보통 1점 / 어려움 –"
+  reload
+  clock data
+  expect text "history-0" == "1점"
+  expect text "today" == "오늘 1판을 했어요."
+
+test "leaving a game stops its timer and records nothing"
+  tap "open-math"
+  clock settle
+  tap "start"
+  clock settle
+  type "answer" "9"
+  tap "submit"
+  tap "quit"
+  clock settle
+  clock +70000
+  expect tree missing "final-score"
+  tap "intro-back"
+  clock settle
+  expect tree has "empty-history"
+
+test "sequence memory grows on a full repeat and ends after two misses"
+  tap "open-seq"
+  clock settle
+  tap "start"
+  clock settle
+  expect text "seq-len" == "길이 4"
+  tap "tile-0"
+  clock +3000
+  tap "tile-3"
+  tap "tile-3"
+  tap "tile-4"
+  tap "tile-7"
+  expect text "seq-len" == "길이 5"
+  expect text "score" == "기록 4"
+  clock +4000
+  tap "tile-0"
+  expect text "lives" == "남은 기회 1"
+  clock +4000
+  tap "tile-0"
+  clock settle
+  expect text "final-score" == "4"
+
+test "colour attention scores correct minus wrong, with keys 1 to 4"
+  tap "open-stroop"
+  clock settle
+  tap "start"
+  clock settle
+  expect text "word" == "파랑"
+  tap "ink-1"
+  tap "ink-0"
+  type "ink-0" key "3"
+  expect text "correct" == "맞음 2"
+  expect text "wrong" == "틀림 1"
+  clock +40200
+  clock settle
+  expect text "final-score" == "1"
+  expect text "detail" == "맞음 2 · 틀림 1 · 정확도 67%"
