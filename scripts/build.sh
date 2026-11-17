@@ -28,7 +28,8 @@ if ! command -v cargo >/dev/null 2>&1; then
   . "$HOME/.cargo/env"
 fi
 
-(cd "$ROOT/exact" && bun install --frozen-lockfile)
+# Exact's "Web CI preparation": pinned stable + nightly Rust, wasm tools, node_modules, locked crates.
+bun "$ROOT/exact/scripts/exact.mjs" setup --platform web
 cd "$ROOT/brain-warmup"
 bun exact.mjs web-build --out dist
 cp dist/shell.html dist/404.html

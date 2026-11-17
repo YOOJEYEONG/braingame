@@ -1,3 +1,4 @@
 /exact/
 .vercel
 .DS_Store
+.env*
